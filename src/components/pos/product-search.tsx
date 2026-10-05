@@ -162,7 +162,6 @@ export function QuickProductsDialog({
                 return (
                   <button
                     key={item.id}
-                    disabled={p.stock <= 0}
                     onClick={() =>
                       onSelect({
                         id: p.id,
@@ -176,9 +175,7 @@ export function QuickProductsDialog({
                     }
                     className={cn(
                       "flex min-h-[5.5rem] flex-col justify-between rounded-xl border p-3 text-left transition-all",
-                      p.stock <= 0
-                        ? "bg-muted cursor-not-allowed opacity-50"
-                        : "bg-card hover:border-primary/40 hover:bg-accent active:scale-[.98]"
+                      "bg-card hover:border-primary/40 hover:bg-accent active:scale-[.98]"
                     )}
                   >
                     <p className="line-clamp-2 text-xs leading-tight font-semibold">
