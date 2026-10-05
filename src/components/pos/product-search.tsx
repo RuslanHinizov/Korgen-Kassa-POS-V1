@@ -1,5 +1,6 @@
 "use client";
 
+import { ScanBurst, SCAN_IDLE_MS, isScanTerminator, keyToChar } from "@/lib/scanner-decode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Keyboard, Scale, Search, X, Zap } from "lucide-react";
@@ -455,31 +456,50 @@ export function KioskSearchBar() {
     }
   }
 
-  // A scanner types like a very fast keyboard. When no field has the focus (the cashier tapped a button…) its keystrokes
-  // would vanish, so digits arriving <80 ms apart and ended by Enter are taken as a scan.
+  // A scanner types like a very fast keyboard. Its keys are read by the PHYSICAL key (src/lib/scanner-decode.ts), so the
+  // Windows layout (Russian letters instead of Latin) or a scanner made for another country does not garble the code, and a
+  // scan counts as finished by Enter, numpad Enter, Tab — or by a short silence when the scanner sends no terminator at all.
   const submitRef = useRef(submitSearch);
   useEffect(() => { submitRef.current = submitSearch; });
+  const burstRef = useRef(new ScanBurst());
+  const burstTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishScan = useCallback((): string | null => {
+    const text = burstRef.current.text();
+    burstRef.current.clear();
+    if (burstTimer.current) clearTimeout(burstTimer.current);
+    return text;
+  }, []);
+  const noteScanKey = useCallback((e: KeyboardEvent) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const c = keyToChar(e);
+    if (c === null) return;
+    burstRef.current.push(c);
+    if (burstTimer.current) clearTimeout(burstTimer.current);
+    burstTimer.current = setTimeout(() => {
+      const text = finishScan();
+      if (!text) return;
+      queryRef.current = text;
+      setQuery(text);
+      void submitRef.current(text);
+    }, SCAN_IDLE_MS);
+  }, [finishScan]);
   useEffect(() => {
-    let buf = "";
-    let last = 0;
+    // no field has the focus (the cashier tapped a button…): the keystrokes would vanish, so they are taken from here
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (document.querySelector('[role="dialog"]')) return; // payment / other windows own the keyboard
-      const now = Date.now();
-      if (e.key === "Enter") {
-        if (buf.length >= 6) { e.preventDefault(); void submitRef.current(buf); }
-        buf = "";
+      if (isScanTerminator(e)) {
+        const scanned = finishScan();
+        if (scanned) { e.preventDefault(); void submitRef.current(scanned); }
         return;
       }
-      if (e.key.length !== 1) return;
-      buf = now - last > 80 ? e.key : buf + e.key;
-      last = now;
+      noteScanKey(e);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [finishScan, noteScanKey]);
 
   return (
     <div className="relative w-full shrink-0 sm:w-[28rem]">
@@ -490,10 +510,16 @@ export function KioskSearchBar() {
           value={query}
           onChange={handleChange}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void submitSearch(e.currentTarget.value);
+            if (isScanTerminator(e.nativeEvent)) {
+              // a scan ends here: use the code read from the physical keys (right whatever the layout), else what was typed
+              const scanned = finishScan();
+              if (scanned || e.key === "Enter" || e.code === "NumpadEnter") {
+                e.preventDefault();
+                void submitSearch(scanned ?? e.currentTarget.value);
+              }
+              return;
             }
+            noteScanKey(e.nativeEvent);
             if (e.key === "Escape") {
               queryRef.current = "";
               setQuery("");

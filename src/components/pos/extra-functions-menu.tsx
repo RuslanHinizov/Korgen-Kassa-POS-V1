@@ -9,6 +9,7 @@ import { syncCatalog } from "@/lib/offline/catalog";
 import { toast } from "sonner";
 import type { ReceiptData } from "@/components/receipt/receipt";
 import { BarcodeSearchModal } from "./barcode-search-modal";
+import { ScannerTestDialog } from "./scanner-test-dialog";
 import { QuickReceivingModal } from "./quick-receiving-modal";
 import { DebtScreen, type Debtor } from "./debt-screen";
 import { ManagerGate } from "./manager-gate";
@@ -57,6 +58,7 @@ export function ExtraFunctionsMenu({
   const [debtError, setDebtError] = useState<string | null>(null);
   const [printerEnabled, setPrinterEnabled] = useState(readPrinterEnabled);
   const [addPrinterOpen, setAddPrinterOpen] = useState(false);
+  const [scannerTestOpen, setScannerTestOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   async function exitProgram() {
@@ -183,6 +185,7 @@ export function ExtraFunctionsMenu({
           <button className={BUTTON} onClick={() => setDebtGateOpen(true)}>ДОЛГ</button>
           <button className={BUTTON} onClick={() => void checkUpdate()}>ПРОВЕРИТЬ ОБНОВЛЕНИЕ</button>
           <button className={BUTTON} onClick={() => setAddPrinterOpen(true)}>ДОБАВИТЬ ДОП ПРИНТЕР</button>
+          <button className={BUTTON} onClick={() => setScannerTestOpen(true)}>ТЕСТ СКАНЕРА</button>
           {zoom !== null && (
             <div className={BUTTON + " flex-col gap-1"}>
               <span>РАЗМЕР ЭКРАНА: {zoom}%</span>
@@ -233,6 +236,7 @@ export function ExtraFunctionsMenu({
       )}
 
       {addPrinterOpen && <AddPrinterModal onClose={() => setAddPrinterOpen(false)} />}
+      {scannerTestOpen && <ScannerTestDialog onClose={() => setScannerTestOpen(false)} />}
     </div>
   );
 }
