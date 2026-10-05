@@ -54,6 +54,7 @@ export function ReportsDashboard() {
   const [pieData, setPieData] = useState<PieSlice[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [lowStock, setLowStock] = useState<LowStockProduct[]>([]);
+  const [lowStockTotal, setLowStockTotal] = useState(0);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -67,6 +68,7 @@ export function ReportsDashboard() {
       setPieData(data.pieData || []);
       setTopProducts(data.topProducts || []);
       setLowStock(data.lowStock || []);
+      setLowStockTotal(data.lowStockTotal ?? (data.lowStock || []).length);
     } finally {
       setLoading(false);
     }
@@ -162,9 +164,9 @@ export function ReportsDashboard() {
             {tabId === "overview" ? t("overview") : (
               <span className="flex items-center gap-1.5">
                 {t("low_stock")}
-                {lowStock.length > 0 && (
+                {lowStockTotal > 0 && (
                   <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">
-                    {lowStock.length}
+                    {lowStockTotal}
                   </span>
                 )}
               </span>
@@ -230,7 +232,8 @@ export function ReportsDashboard() {
           <div className="px-4 py-3 border-b flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-destructive" />
             <h2 className="text-sm font-semibold">{t("low_stock_products")}</h2>
-            <span className="text-xs text-muted-foreground">{t("at_or_below", { count: lowStock.length })}</span>
+            <span className="text-xs text-muted-foreground">{t("at_or_below", { count: lowStockTotal })}</span>
+            {lowStockTotal > lowStock.length && <span className="text-xs text-muted-foreground">· {t("shown_first", { count: lowStock.length })}</span>}
           </div>
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/50">

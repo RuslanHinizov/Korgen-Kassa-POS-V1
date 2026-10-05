@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { StoreLink as Link } from "@/components/store/store-link";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { revenueAxis, type CashboxLiveState } from "@/lib/dashboard-helpers";
 import { formatCurrency } from "@/lib/utils";
 import {
   AreaChart,
@@ -21,6 +22,7 @@ interface Summary {
   revenue: number;
   grossProfit: number;
   avgTransaction: number;
+  missingCost?: { products: number; revenue: number };
 }
 interface RevenueDay {
   date: string;
@@ -37,12 +39,16 @@ interface Receipt {
 interface Stock {
   saleValue: number;
   costValue: number;
+  shelf?: { saleValue: number; costValue: number };
+  negative?: { products: number; saleValue: number; costValue: number };
 }
 interface Cashbox {
   id: string;
   name: string;
   balance: number | null;
-  status: string;
+  state: CashboxLiveState;
+  lastSyncAt: string | null;
+  appVersion: string | null;
 }
 interface FinanceAccount {
   id: string;
@@ -54,16 +60,12 @@ interface Store {
   name: string;
 }
 
-const RANGE_LABEL: Record<Range, string> = {
-  today: "Сегодня",
-  yesterday: "Вчера",
-  week: "7 дней",
-  month30: "30 дней",
-  month90: "90 дней",
-};
+const RANGES: Range[] = ["today", "yesterday", "week", "month30", "month90"];
 
 export function DashboardHome() {
   const t = useTranslations("dashboard");
+  const locale = useLocale();
+  const rangeLabel = (r: Range) => t(`range_${r}`);
   const storeId = useStoreId();
   const pathname = useStrippedPathname();
   const [range, setRange] = useState<Range>("week");
@@ -85,7 +87,7 @@ export function DashboardHome() {
     setError(null);
     try {
       const r = await fetch(`/api/dashboard?range=${range}&tz=${new Date().getTimezoneOffset()}`);
-      if (!r.ok) throw new Error("Не удалось загрузить показатели");
+      if (!r.ok) throw new Error(t("load_error"));
       const d = await r.json();
       setSummary(d.summary ?? null);
       setRevenueByDay(d.revenueByDay ?? []);
@@ -96,11 +98,11 @@ export function DashboardHome() {
       setExpenses(d.expenses ?? 0);
       setUpdatedAt(new Date());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось загрузить показатели");
+      setError(e instanceof Error ? e.message : t("load_error"));
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [range, t]);
 
   useEffect(() => {
     load();
@@ -111,6 +113,8 @@ export function DashboardHome() {
       .then((d) => setStores(d.stores ?? []))
       .catch(() => setStores([]));
   }, []);
+
+  const axis = revenueAxis(revenueByDay.map((d) => d.revenue));
 
   function switchStore(nextStoreId: string) {
     if (nextStoreId !== storeId) window.location.assign(`/store/${nextStoreId}${pathname}`);
@@ -124,11 +128,11 @@ export function DashboardHome() {
           <select
             value={storeId}
             onChange={(e) => switchStore(e.target.value)}
-            aria-label="Выберите магазин"
+            aria-label={t("choose_store")}
             className="bg-background h-9 min-w-44 rounded-md border px-3 text-sm font-medium"
           >
             {stores.length === 0 ? (
-              <option value={storeId}>Магазин</option>
+              <option value={storeId}>{t("store_fallback")}</option>
             ) : (
               stores.map((store) => (
                 <option key={store.id} value={store.id}>
@@ -142,11 +146,11 @@ export function DashboardHome() {
               onClick={() => setRangeOpen((v) => !v)}
               className="bg-background hover:bg-accent inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium"
             >
-              {RANGE_LABEL[range]}
+              {rangeLabel(range)}
             </button>
             {rangeOpen && (
               <div className="bg-card absolute top-10 left-0 z-10 w-44 rounded-md border py-1 shadow-lg">
-                {(Object.keys(RANGE_LABEL) as Range[]).map((r) => (
+                {RANGES.map((r) => (
                   <button
                     key={r}
                     onClick={() => {
@@ -155,7 +159,7 @@ export function DashboardHome() {
                     }}
                     className="hover:bg-accent block w-full px-3 py-1.5 text-left text-sm"
                   >
-                    {RANGE_LABEL[r]}
+                    {rangeLabel(r)}
                   </button>
                 ))}
               </div>
@@ -166,7 +170,7 @@ export function DashboardHome() {
           {updatedAt && (
             <span>
               {t("updated_at")}:{" "}
-              {updatedAt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
+              {updatedAt.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
             </span>
           )}
           <button
@@ -209,6 +213,11 @@ export function DashboardHome() {
           label={t("profit")}
           value={formatCurrency(summary?.grossProfit ?? 0)}
           loading={loading}
+          note={
+            summary?.missingCost && summary.missingCost.products > 0
+              ? t("missing_cost", { count: summary.missingCost.products, sum: formatCurrency(summary.missingCost.revenue) })
+              : undefined
+          }
         />
       </div>
 
@@ -241,7 +250,7 @@ export function DashboardHome() {
                   <XAxis
                     dataKey="date"
                     tickFormatter={(d) =>
-                      new Date(d).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })
+                      new Date(d).toLocaleDateString(locale, { day: "2-digit", month: "2-digit" })
                     }
                     fontSize={11}
                     tickLine={false}
@@ -253,10 +262,14 @@ export function DashboardHome() {
                     axisLine={false}
                     tickFormatter={(v) => formatCurrency(v)}
                     width={70}
+                    // no sales at all: a single ₸0 tick instead of invented ₸1…₸4; returns can push a day below zero
+                    domain={axis.empty ? [0, 1] : [(min: number) => Math.min(0, min), "auto"]}
+                    ticks={axis.ticks}
+                    allowDecimals={false}
                   />
                   <Tooltip
                     formatter={(v?: number) => formatCurrency(v ?? 0)}
-                    labelFormatter={(d) => new Date(d).toLocaleDateString("ru-RU")}
+                    labelFormatter={(d) => new Date(d).toLocaleDateString(locale)}
                   />
                   <Area
                     type="monotone"
@@ -288,11 +301,11 @@ export function DashboardHome() {
           ) : (
             <>
               <div className="bg-muted/30 mb-3 rounded-md border px-3 py-2 text-center">
-                <p className="text-muted-foreground text-xs">Расходы</p>
+                <p className="text-muted-foreground text-xs">{t("expenses")}</p>
                 <p className="text-lg font-bold">{expenses > 0 ? "−" : ""}{formatCurrency(expenses)}</p>
               </div>
               {receipts.length === 0 && (
-                <p className="text-muted-foreground py-6 text-center text-sm">{t("no_receipts")}</p>
+                <p className="text-muted-foreground py-6 text-center text-sm">{t("no_receipts_period")}</p>
               )}
               <ul className="divide-y">
                 {receipts.map((r) => (
@@ -306,9 +319,9 @@ export function DashboardHome() {
                       </Link>
                       <p className="text-muted-foreground text-xs">
                         <span className="text-primary">
-                          ✓ {r.status === "POSTED" ? "Проведен" : "Черновик"}
+                          ✓ {r.status === "POSTED" ? t("posted") : t("draft")}
                         </span>{" "}
-                        · {new Date(r.receivedAt).toLocaleDateString("ru-RU")}
+                        · {new Date(r.receivedAt).toLocaleDateString(locale)}
                       </p>
                     </div>
                     <p className="font-semibold">{formatCurrency(r.total)}</p>
@@ -336,6 +349,20 @@ export function DashboardHome() {
                 <p className="text-lg font-bold">{formatCurrency(stock?.costValue ?? 0)}</p>
                 <p className="text-muted-foreground text-xs">{t("stock_cost_value")}</p>
               </div>
+              {stock?.negative && stock.negative.products > 0 && (
+                <div className="border-t pt-2 text-xs text-muted-foreground space-y-1">
+                  <p>
+                    {t("stock_negative", {
+                      count: stock.negative.products,
+                      sale: `−${formatCurrency(Math.abs(stock.negative.saleValue))}`,
+                      cost: `−${formatCurrency(Math.abs(stock.negative.costValue))}`,
+                    })}
+                  </p>
+                  {stock.shelf && (
+                    <p>{t("stock_shelf", { sale: formatCurrency(stock.shelf.saleValue), cost: formatCurrency(stock.shelf.costValue) })}</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -353,7 +380,15 @@ export function DashboardHome() {
               {cashboxes.map((c) => (
                 <div key={c.id} className="rounded-md border p-2">
                   <p className="truncate text-sm font-medium">{c.name}</p>
-                  <p className="text-muted-foreground text-xs">{c.status}</p>
+                  <p className={`text-xs ${c.state === "online" ? "text-emerald-600" : c.state === "inactive" ? "text-red-600" : "text-muted-foreground"}`}>
+                    {t(`cashbox_${c.state}`)}
+                  </p>
+                  {c.lastSyncAt && (
+                    <p className="text-muted-foreground text-[11px]">
+                      {t("cashbox_last_sync", { time: new Date(c.lastSyncAt).toLocaleString(locale, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) })}
+                      {c.appVersion ? ` · v${c.appVersion}` : ""}
+                    </p>
+                  )}
                   <p className="mt-1 text-xs font-medium">
                     {c.balance != null ? formatCurrency(c.balance) : "—"}
                   </p>
@@ -387,13 +422,14 @@ export function DashboardHome() {
   );
 }
 
-function KpiCard({ label, value, loading }: { label: string; value: string; loading: boolean }) {
+function KpiCard({ label, value, loading, note }: { label: string; value: string; loading: boolean; note?: string }) {
   return (
     <div className="bg-card rounded-lg border p-4">
       <p className="text-muted-foreground text-sm">{label}</p>
       <p className="mt-1 text-2xl font-bold">
         {loading ? <Loader2 className="text-muted-foreground h-5 w-5 animate-spin" /> : value}
       </p>
+      {!loading && note && <p className="mt-1 text-xs text-amber-600">{note}</p>}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getStoreId } from "@/lib/store-context";
 import { getRevenueSummary, getStockValue } from "@/lib/reports";
+import { cashboxLiveState } from "@/lib/dashboard-helpers";
 
 /** GET /api/dashboard?range=today|yesterday|week|month30|month90 — Главная page: KPIs,
  * revenue chart, recent receipts, stock value. Range set matches UMAG's own 5 period
@@ -42,13 +43,15 @@ export async function GET(req: NextRequest) {
   const [summary, stock, receipts, expenses, cashboxes, accounts] = await Promise.all([
     getRevenueSummary(start, end, storeId, tzOffsetMin),
     getStockValue(storeId),
+    // Приёмки panel: the receipts posted in the chosen period, newest first (the panel's «Расходы» is their total)
     prisma.purchaseReceipt.findMany({
-      where: { storeId, status: "POSTED" },
-      orderBy: { createdAt: "desc" },
+      where: { storeId, status: "POSTED", postedAt: { gte: start, lte: end } },
+      orderBy: { postedAt: "desc" },
       take: 3,
       select: {
         id: true,
         totalAmount: true,
+        postedAt: true,
         createdAt: true,
         status: true,
         supplier: { select: { name: true } },
@@ -57,11 +60,12 @@ export async function GET(req: NextRequest) {
     prisma.purchaseReceipt.aggregate({
       where: { storeId, status: "POSTED", postedAt: { gte: start, lte: end } },
       _sum: { totalAmount: true },
+      _count: true,
     }),
     prisma.cashbox.findMany({
-      where: { storeId, active: true },
+      where: { storeId },
       orderBy: { no: "asc" },
-      select: { id: true, name: true, active: true, account: { select: { balance: true } } },
+      select: { id: true, name: true, active: true, lastSyncAt: true, appVersion: true, account: { select: { balance: true } } },
     }),
     prisma.financeAccount.findMany({
       where: { storeId },
@@ -75,22 +79,26 @@ export async function GET(req: NextRequest) {
       revenue: summary.revenue,
       grossProfit: summary.grossProfit,
       avgTransaction: summary.avgTransaction,
+      missingCost: summary.missingCost,
     },
     revenueByDay: summary.revenueByDay,
     stock,
     expenses: Number(expenses._sum.totalAmount ?? 0),
+    receiptsCount: expenses._count,
     receipts: receipts.map((r) => ({
       id: r.id,
       supplierName: r.supplier?.name ?? "—",
       total: Number(r.totalAmount),
-      receivedAt: r.createdAt,
+      receivedAt: r.postedAt ?? r.createdAt,
       status: r.status,
     })),
     cashboxes: cashboxes.map((c) => ({
       id: c.id,
       name: c.name,
       balance: c.account ? Number(c.account.balance) : null,
-      status: c.active ? "Активна" : "Не активна",
+      state: cashboxLiveState(c),
+      lastSyncAt: c.lastSyncAt,
+      appVersion: c.appVersion,
     })),
     accounts: accounts.map((a) => ({ id: a.id, name: a.name, balance: Number(a.balance) })),
   });

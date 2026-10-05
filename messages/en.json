@@ -504,7 +504,27 @@
     "no_accounts": "No accounts yet",
     "coming_soon": "Coming soon",
     "refresh": "Refresh",
-    "updated_at": "Last updated"
+    "updated_at": "Last updated",
+    "range_today": "Today",
+    "range_yesterday": "Yesterday",
+    "range_week": "7 days",
+    "range_month30": "30 days",
+    "range_month90": "90 days",
+    "expenses": "Expenses",
+    "posted": "Posted",
+    "draft": "Draft",
+    "choose_store": "Choose store",
+    "store_fallback": "Store",
+    "load_error": "Could not load the figures",
+    "no_receipts_period": "No receipts in the selected period",
+    "cashbox_inactive": "Inactive",
+    "cashbox_online": "Active · online",
+    "cashbox_offline": "Active · offline",
+    "cashbox_unbound": "Active · not connected",
+    "cashbox_last_sync": "Last seen: {time}",
+    "missing_cost": "Sold without a purchase price: {count} products worth {sum}. Profit is overstated by that amount.",
+    "stock_negative": "Below zero: {count} products ({sale} at sale price, {cost} at cost)",
+    "stock_shelf": "Actually on the shelves (stock above 0 only): {sale} / {cost}"
   },
   "sales": {
     "title": "Sales History",
@@ -678,7 +698,8 @@
     "from": "From",
     "to": "To",
     "apply": "Apply",
-    "at_or_below": "({count} items at or below threshold)"
+    "at_or_below": "({count} items at or below threshold)",
+    "shown_first": "first {count} shown"
   },
   "settings": {
     "title": "Settings",

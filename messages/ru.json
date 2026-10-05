@@ -504,7 +504,27 @@
     "no_accounts": "Счетов пока нет",
     "coming_soon": "Скоро",
     "refresh": "Обновить",
-    "updated_at": "Последнее обновление"
+    "updated_at": "Последнее обновление",
+    "range_today": "Сегодня",
+    "range_yesterday": "Вчера",
+    "range_week": "7 дней",
+    "range_month30": "30 дней",
+    "range_month90": "90 дней",
+    "expenses": "Расходы",
+    "posted": "Проведен",
+    "draft": "Черновик",
+    "choose_store": "Выберите магазин",
+    "store_fallback": "Магазин",
+    "load_error": "Не удалось загрузить показатели",
+    "no_receipts_period": "За выбранный период приёмок нет",
+    "cashbox_inactive": "Не активна",
+    "cashbox_online": "Активна · в сети",
+    "cashbox_offline": "Активна · не в сети",
+    "cashbox_unbound": "Активна · не подключена",
+    "cashbox_last_sync": "Последняя связь: {time}",
+    "missing_cost": "Без закупочной цены продано товаров: {count} на {sum}. Прибыль завышена на эту сумму.",
+    "stock_negative": "В минусе: {count} тов. ({sale} по продажной, {cost} по закупочной)",
+    "stock_shelf": "Реально на полках (только остаток больше 0): {sale} / {cost}"
   },
   "sales": {
     "title": "История продаж",
@@ -684,7 +704,8 @@
     "from": "С",
     "to": "По",
     "apply": "Применить",
-    "at_or_below": "(позиций на пороге или ниже: {count})"
+    "at_or_below": "(позиций на пороге или ниже: {count})",
+    "shown_first": "показаны первые {count}"
   },
   "settings": {
     "title": "Настройки",

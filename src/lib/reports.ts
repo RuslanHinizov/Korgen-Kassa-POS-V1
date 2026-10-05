@@ -11,6 +11,8 @@ export interface RevenueSummary {
   transactions: number;
   avgTransaction: number;
   revenueByDay: RevenueDay[];
+  /** Sold products that have no purchase price: their whole sum counts as profit, so the profit is overstated by this much. */
+  missingCost: { products: number; revenue: number };
 }
 
 /**
@@ -32,7 +34,7 @@ export async function getRevenueSummary(
       total: true,
       discountAmount: true,
       createdAt: true,
-      items: { select: { total: true, quantity: true, discountAmount: true, product: { select: { cost: true } } } },
+      items: { select: { total: true, quantity: true, discountAmount: true, productId: true, product: { select: { cost: true } } } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -40,6 +42,8 @@ export async function getRevenueSummary(
   const byDay: Record<string, { revenue: number; transactions: number }> = {};
   let totalRevenue = 0;
   let totalGrossProfit = 0;
+  const missingCostProducts = new Set<string>();
+  let missingCostRevenue = 0;
 
   for (const sale of sales) {
     const day = localDay(sale.createdAt);
@@ -58,6 +62,10 @@ export async function getRevenueSummary(
       const itemRevenue = parseFloat(item.total.toString());
       const unitCost = item.product?.cost ? parseFloat(item.product.cost.toString()) : 0;
       totalGrossProfit += itemRevenue - unitCost * parseFloat(item.quantity.toString());
+      if (unitCost === 0 && itemRevenue > 0) {
+        missingCostProducts.add(item.productId ?? `custom:${item.total}`);
+        missingCostRevenue += itemRevenue;
+      }
     }
   }
 
@@ -101,19 +109,35 @@ export async function getRevenueSummary(
     transactions: sales.length,
     avgTransaction: sales.length > 0 ? totalRevenue / sales.length : 0,
     revenueByDay,
+    missingCost: { products: missingCostProducts.size, revenue: missingCostRevenue },
   };
 }
 
-/** Sum of stock × sale price and stock × cost, for active products (Склад card). */
-export async function getStockValue(
-  storeId: string
-): Promise<{ saleValue: number; costValue: number }> {
-  const rows = await prisma.$queryRaw<{ sale_value: string | null; cost_value: string | null }[]>`
-    SELECT SUM(stock * price) AS sale_value, SUM(stock * COALESCE(cost, 0)) AS cost_value
+/**
+ * Склад card. The headline numbers are UMAG's: stock × price and stock × cost over every active product, so products with a
+ * negative balance (sold but never received) are subtracted. `shelf` is what is really on the shelves (positive balances
+ * only) and `negative` shows how much the minus balances pull the headline down.
+ */
+export interface StockValue {
+  saleValue: number;
+  costValue: number;
+  shelf: { saleValue: number; costValue: number };
+  negative: { products: number; saleValue: number; costValue: number };
+}
+export async function getStockValue(storeId: string): Promise<StockValue> {
+  const rows = await prisma.$queryRaw<Record<string, string | bigint | null>[]>`
+    SELECT SUM(stock * price) AS sale_value, SUM(stock * COALESCE(cost, 0)) AS cost_value,
+           SUM(stock * price) FILTER (WHERE stock > 0) AS shelf_sale, SUM(stock * COALESCE(cost, 0)) FILTER (WHERE stock > 0) AS shelf_cost,
+           COUNT(*) FILTER (WHERE stock < 0) AS neg_products,
+           SUM(stock * price) FILTER (WHERE stock < 0) AS neg_sale, SUM(stock * COALESCE(cost, 0)) FILTER (WHERE stock < 0) AS neg_cost
     FROM "Product" WHERE active = true AND "deletedAt" IS NULL AND "storeId" = ${storeId}
   `;
+  const r = rows[0] ?? {};
+  const n = (v: string | bigint | null | undefined) => Number(v ?? 0) || 0;
   return {
-    saleValue: parseFloat(rows[0]?.sale_value ?? "0") || 0,
-    costValue: parseFloat(rows[0]?.cost_value ?? "0") || 0,
+    saleValue: n(r.sale_value),
+    costValue: n(r.cost_value),
+    shelf: { saleValue: n(r.shelf_sale), costValue: n(r.shelf_cost) },
+    negative: { products: n(r.neg_products), saleValue: n(r.neg_sale), costValue: n(r.neg_cost) },
   };
 }

@@ -18,27 +18,24 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const storeId = await getStoreId();
-  const [products, activeCashboxes] = await Promise.all([
-    prisma.product.findMany({
-      where: { storeId, active: true, deletedAt: null },
-      select: { id: true, name: true, stock: true, lowStockThreshold: true },
-      orderBy: { stock: "asc" },
-      take: 100,
-    }),
+  // A product is "low" when its stock is at or under its own threshold (a column comparison, so it is counted in the database
+  // — never from a capped list). Minus balances (sold, never received) are part of it and are named separately.
+  const [lowRows, activeCashboxes] = await Promise.all([
+    prisma.$queryRaw<{ low: bigint; negative: bigint }[]>`
+      SELECT COUNT(*) FILTER (WHERE stock <= "lowStockThreshold") AS low, COUNT(*) FILTER (WHERE stock < 0) AS negative
+      FROM "Product" WHERE "storeId" = ${storeId} AND active = true AND "deletedAt" IS NULL`,
     prisma.cashbox.count({ where: { storeId, active: true } }),
   ]);
-
-  const lowStock = products.filter((product) =>
-    product.stock.lessThanOrEqualTo(product.lowStockThreshold)
-  );
+  const low = Number(lowRows[0]?.low ?? 0);
+  const negative = Number(lowRows[0]?.negative ?? 0);
   const notifications: AppNotification[] = [];
 
-  if (lowStock.length > 0) {
+  if (low > 0) {
     notifications.push({
       id: "low-stock",
       level: "warning",
       title: "Низкий остаток товаров",
-      description: `Товаров на минимальном остатке: ${lowStock.length}.`,
+      description: `Товаров на минимальном остатке: ${low}.` + (negative > 0 ? ` Из них с остатком в минусе: ${negative}.` : ""),
       href: "/reports?tab=lowStock",
     });
   }

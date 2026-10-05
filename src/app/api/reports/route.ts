@@ -4,6 +4,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getStoreId } from "@/lib/store-context";
 
+const LOW_STOCK_LIST_LIMIT = 500;
+
 export async function GET(req: NextRequest) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session || !["ADMIN", "MANAGER"].includes(session.user.role ?? "")) {
@@ -43,7 +45,8 @@ export async function GET(req: NextRequest) {
   }
 
   const storeId = await getStoreId();
-  const [sales, topProducts, voidedCount, refundSummary, lowStockProducts] = await Promise.all([
+  const [sales, topProducts, voidedCount, refundSummary, lowStockProducts, lowStockCount] = await Promise.all([
+    // (see the two low-stock queries at the end of this list)
     prisma.sale.findMany({
       // Include refunded sales in gross revenue.  The dashboard then subtracts
       // the matching refund rows only when the cashier selects net revenue.
@@ -84,15 +87,19 @@ export async function GET(req: NextRequest) {
       _count: { id: true },
       _sum: { amount: true },
     }),
-    prisma.product.findMany({
-      where: { active: true, deletedAt: null, storeId },
-      select: { id: true, name: true, stock: true, lowStockThreshold: true, sku: true, category: true },
-      orderBy: { stock: "asc" },
-      take: 100,
-    }),
+    // «Низкий остаток»: products at or under their own threshold, chosen in the database (the lowest balances first) — not
+    // a cut of the 100 lowest-stock products, which made the count read "100" whatever the real number was.
+    prisma.$queryRaw<{ id: string; name: string; stock: unknown; lowStockThreshold: number; sku: string | null; category: string | null }[]>`
+      SELECT id, name, stock, "lowStockThreshold", sku, category FROM "Product"
+      WHERE "storeId" = ${storeId} AND active = true AND "deletedAt" IS NULL AND stock <= "lowStockThreshold"
+      ORDER BY stock ASC, name ASC LIMIT ${LOW_STOCK_LIST_LIMIT}`,
+    prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(*) AS n FROM "Product"
+      WHERE "storeId" = ${storeId} AND active = true AND "deletedAt" IS NULL AND stock <= "lowStockThreshold"`,
   ]);
 
-  const lowStock = lowStockProducts.filter((p) => p.stock.lessThanOrEqualTo(p.lowStockThreshold));
+  const lowStock = lowStockProducts.map((p) => ({ ...p, stock: Number(p.stock) }));
+  const lowStockTotal = Number(lowStockCount[0]?.n ?? 0);
 
   const byDay: Record<string, { revenue: number; transactions: number }> = {};
   let totalRevenue = 0;
@@ -155,5 +162,6 @@ export async function GET(req: NextRequest) {
       revenue: parseFloat((p._sum.total ?? 0).toString()),
     })),
     lowStock,
+    lowStockTotal,
   });
 }
