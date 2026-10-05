@@ -65,24 +65,36 @@ function inside(rel) {
   return full.startsWith(WEB + path.sep) ? full : null;
 }
 
+// With a cable or Wi-Fi but no internet, every call used to wait for its timeout before the till fell back to its own
+// data («Обработка», «Загрузка» hung). After a failure answer "offline" at once for a few seconds, and give up sooner.
+let upstreamDownUntil = 0;
+
 function proxy(req, res) {
   const target = new URL(serverUrl());
   const lib = target.protocol === "https:" ? https : http;
   const headers = { ...req.headers, host: target.host, origin: target.origin, "x-korgen-version": app.getVersion() };
   delete headers.referer;
+  const api = req.url.startsWith("/api/");
+  if (api && Date.now() < upstreamDownUntil) {
+    res.writeHead(503, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "offline" }));
+    req.resume();
+    return;
+  }
   const up = lib.request(
-    { protocol: target.protocol, hostname: target.hostname, port: target.port || undefined, method: req.method, path: req.url, headers, timeout: 30000 },
+    { protocol: target.protocol, hostname: target.hostname, port: target.port || undefined, method: req.method, path: req.url, headers, timeout: api ? 8000 : 30000 },
     (r) => {
+      if (api) upstreamDownUntil = 0;
       res.writeHead(r.statusCode || 502, r.headers);
       r.pipe(res);
     },
   );
   const offline = () => {
+    if (api) upstreamDownUntil = Date.now() + 10000;
     if (res.headersSent) {
       res.destroy();
       return;
     }
-    const api = req.url.startsWith("/api/");
     res.writeHead(503, { "content-type": api ? "application/json" : "text/plain" });
     res.end(api ? JSON.stringify({ error: "offline" }) : "offline");
   };
