@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld("korgenShell", {
   info: () => ipcRenderer.invoke("shell:info"),
   printerStatus: () => ipcRenderer.invoke("print:status"),
   printReceipt: (html) => ipcRenderer.invoke("print:receipt", html),
+  printLabel: (html, opts) => ipcRenderer.invoke("print:label", html, opts),
+  labelPrinter: () => ipcRenderer.invoke("print:label-printer"),
   checkForUpdate: () => ipcRenderer.invoke("update:check"),
   updateStatus: () => ipcRenderer.invoke("update:status"),
   installUpdate: () => ipcRenderer.send("update:install"),

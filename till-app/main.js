@@ -194,6 +194,8 @@ function setupUpdates() {
  */
 const VIRTUAL_PRINTER = /onenote|pdf|xps|fax|anydesk|microsoft print|send to/i;
 const RECEIPT_PRINTER = /(^|[^a-z])(xp|pos)[-\s]?\d|xprinter|thermal|receipt|чек/i;
+// The sticky-label printer (Xprinter XP-365B, XP-360B … «B» = barcode/label) is a different device: never a receipt printer.
+const LABEL_PRINTER = /(^|[^a-z0-9])xp[-\s]?3\d{2}\s?b|label|этикет|barcode/i;
 function configuredPrinter() {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), "config.json"), "utf8"));
@@ -210,9 +212,10 @@ async function pickPrinter(webContents) {
     if (hit) return hit.name;
   }
   const real = printers.filter((p) => !VIRTUAL_PRINTER.test(p.name));
-  const receipt = real.find((p) => RECEIPT_PRINTER.test(p.name));
+  const noLabel = real.filter((p) => !LABEL_PRINTER.test(p.name));
+  const receipt = noLabel.find((p) => RECEIPT_PRINTER.test(p.name));
   if (receipt) return receipt.name;
-  const def = real.find((p) => p.isDefault) || real[0];
+  const def = noLabel.find((p) => p.isDefault) || noLabel[0] || real.find((p) => p.isDefault) || real[0];
   return def ? def.name : null;
 }
 /**
@@ -316,6 +319,86 @@ async function printReceiptHtml(html) {
   }
 }
 
+/**
+ * Sticky labels (price tags) go to the label printer — Xprinter XP-365B or similar — not to the receipt roll. Which one:
+ * {"labelPrinter": "Xprinter XP-365B"} in config.json, else the first installed printer that looks like a label printer.
+ * The label is drawn at 203 dpi in a hidden window and sent as TSPL (size, gap and a bitmap): see label-tspl.js.
+ * config.json may also hold "labelGapMm" (default 2), "labelInvert" (false if the picture comes out inverted) and
+ * "labelDirection" (1 if it comes out upside down).
+ */
+function readConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), "config.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+async function pickLabelPrinter(webContents) {
+  const printers = (await webContents.getPrintersAsync()).filter((p) => !VIRTUAL_PRINTER.test(p.name));
+  const want = readConfig().labelPrinter;
+  if (typeof want === "string" && want) {
+    const hit = printers.find((p) => p.name === want);
+    if (hit) return hit.name;
+  }
+  const label = printers.find((p) => LABEL_PRINTER.test(p.name));
+  return label ? label.name : null;
+}
+
+async function printLabelHtml(html, opts) {
+  const { tsplLabel, dotsFor } = require("./label-tspl");
+  const widthMm = Math.min(82, Math.max(20, Number(opts && opts.widthMm) || 58));
+  const heightMm = Math.min(300, Math.max(10, Number(opts && opts.heightMm) || 40));
+  const copies = Math.min(99, Math.max(1, Math.round(Number(opts && opts.copies) || 1)));
+  const cfg = readConfig();
+  const dotsW = dotsFor(widthMm);
+  const dotsH = dotsFor(heightMm);
+  const cssW = (dotsW / 203) * 96;
+  const oversample = 2;
+  const zoom = (dotsW * oversample) / cssW;
+  const win = new BrowserWindow({
+    show: false,
+    width: dotsW * oversample,
+    height: dotsH * oversample,
+    useContentSize: true,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, zoomFactor: zoom },
+  });
+  const tmp = path.join(app.getPath("temp"), "korgen-label-" + Date.now());
+  try {
+    await win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+    await win.webContents.insertCSS("html,body{overflow:hidden!important} ::-webkit-scrollbar{display:none!important}");
+    const deviceName = await pickLabelPrinter(win.webContents);
+    if (!deviceName) return { ok: false, error: "no-label-printer" };
+    win.setContentSize(dotsW * oversample, dotsH * oversample);
+    await new Promise((r) => setTimeout(r, 400));
+    const big = await win.webContents.capturePage({ x: 0, y: 0, width: dotsW * oversample, height: dotsH * oversample });
+    const small = big.resize({ width: dotsW, height: dotsH, quality: "best" });
+    const size = small.getSize();
+    const { data } = tsplLabel({
+      bgra: small.toBitmap(), width: size.width, height: size.height, widthMm, heightMm, copies,
+      gapMm: Number(cfg.labelGapMm) >= 0 && cfg.labelGapMm !== undefined ? Number(cfg.labelGapMm) : 2,
+      invert: cfg.labelInvert !== false,
+      direction: Number(cfg.labelDirection) === 1 ? 1 : 0,
+    });
+    fs.writeFileSync(tmp + ".bin", data);
+    fs.writeFileSync(tmp + ".ps1", "﻿" + RAW_SEND_SCRIPT);
+    return await new Promise((resolve) => {
+      require("child_process").execFile(
+        "powershell.exe",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp + ".ps1", "-Printer", deviceName, "-File", tmp + ".bin"],
+        { windowsHide: true, timeout: 60_000 },
+        (err, _out, errOut) => resolve(err ? { ok: false, error: String(errOut || err.message).trim().slice(0, 300) } : { ok: true, printer: deviceName }),
+      );
+    });
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    setTimeout(() => {
+      win.destroy();
+      for (const ext of [".bin", ".ps1"]) fs.rm(tmp + ext, { force: true }, () => {});
+    }, 3000);
+  }
+}
+
 let server;
 function startServer() {
   return new Promise((resolve, reject) => {
@@ -392,6 +475,21 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     ipcMain.handle("print:receipt", (_e, html) => (typeof html === "string" && html.length < 3_000_000 ? printReceiptHtml(html) : { ok: false, error: "bad receipt" }));
+    // label printer: the name when one is installed (null = labels fall back to the receipt printer)
+    ipcMain.handle("print:label", async (_e, html, opts) => {
+      if (typeof html !== "string" || html.length > 3_000_000) return { ok: false, error: "bad label" };
+      const r = await printLabelHtml(html, opts);
+      // no label printer installed: the old behaviour, the label goes to the receipt printer
+      return r.ok === false && r.error === "no-label-printer" ? printReceiptHtml(html) : r;
+    });
+    ipcMain.handle("print:label-printer", async () => {
+      try {
+        const wc = win && !win.isDestroyed() ? win.webContents : null;
+        return wc ? await pickLabelPrinter(wc) : null;
+      } catch {
+        return null;
+      }
+    });
     // «ПРИНТЕР» light on the till screen: is the receipt printer installed and ready (not switched off / unplugged / out of paper)?
     ipcMain.handle("print:status", async () => {
       try {

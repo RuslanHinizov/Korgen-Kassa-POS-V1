@@ -4,6 +4,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { exitProgram as closeProgram, checkForProgramUpdate, installProgramUpdate } from "@/lib/till-shell";
 import { PRINTER_ENABLED_KEY } from "@/lib/program-print";
+import { getLabelSize, printLabels } from "@/lib/label-print";
 import { flushQueue } from "@/lib/offline/queue";
 import { syncCatalog } from "@/lib/offline/catalog";
 import { toast } from "sonner";
@@ -84,6 +85,13 @@ export function ExtraFunctionsMenu({
   function changeZoom(delta: number) {
     if (zoom === null || !zoomShell?.setZoom) return;
     setZoomState(zoomShell.setZoom(zoom + delta));
+  }
+
+  // prints one sample label on the label printer (XP-365B) in the saved label size, to check printer and size
+  async function testLabel() {
+    const r = await printLabels([{ label: { name: "ТЕСТ ЭТИКЕТКИ Korgen Kassa", price: 1234, unit: "pcs", barcode: "2900000000017" }, copies: 1 }], getLabelSize());
+    if (r.ok) toast.success("Тестовая этикетка отправлена на печать");
+    else toast.error(`Этикетка не напечатана: ${r.error ?? "ошибка принтера"}`);
   }
 
   function togglePrinter() {
@@ -186,6 +194,7 @@ export function ExtraFunctionsMenu({
           <button className={BUTTON} onClick={() => void checkUpdate()}>ПРОВЕРИТЬ ОБНОВЛЕНИЕ</button>
           <button className={BUTTON} onClick={() => setAddPrinterOpen(true)}>ДОБАВИТЬ ДОП ПРИНТЕР</button>
           <button className={BUTTON} onClick={() => setScannerTestOpen(true)}>ТЕСТ СКАНЕРА</button>
+          <button className={BUTTON} onClick={() => void testLabel()}>ТЕСТ ЭТИКЕТКИ</button>
           {zoom !== null && (
             <div className={BUTTON + " flex-col gap-1"}>
               <span>РАЗМЕР ЭКРАНА: {zoom}%</span>

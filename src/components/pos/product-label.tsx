@@ -2,48 +2,60 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { drawBarcode } from "@/lib/draw-barcode";
 import { Loader2, Printer, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
-import { isFractionalUnit, unitLabel } from "@/lib/units";
 import type { ProductResult } from "./product-search";
-import { programCanPrint, printElementOnProgram } from "@/lib/program-print";
+import { labelsDocument, printLabels, programCanPrintLabels, programLabelPrinter } from "@/lib/label-print";
+import { LabelSizePicker, useLabelSize } from "@/components/labels/label-size-picker";
 import { CreateProductModal } from "./create-product-modal";
 import { searchLocal, syncCatalog } from "@/lib/offline/catalog";
 
 export interface LabelProduct { name: string; price: number; unit: string; barcode: string }
 
-/** Printable shelf/item label: name, price and a scannable barcode (same look as the admin «Этикетка товара»). */
+/** Printable shelf/item label: name, price and a scannable barcode. On the till program it goes to the label printer (XP-365B). */
 export function ProductLabelModal({ product, onClose }: { product: LabelProduct; onClose: () => void }) {
-  const svgRef = useRef<SVGSVGElement>(null);
+  const [size, setSize] = useLabelSize();
+  const [copies, setCopies] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const [printer, setPrinter] = useState<string | null | undefined>(undefined);
+  useEffect(() => { if (programCanPrintLabels()) void programLabelPrinter().then(setPrinter); }, []);
 
-  useEffect(() => {
-    if (svgRef.current) {
-      drawBarcode(svgRef.current, product.barcode, { displayValue: true, margin: 0, height: 46, width: 1.45, fontSize: 12 });
-      // Let the bars scale to the label width (58 mm roll) instead of a fixed pixel size.
-      const svg = svgRef.current;
-      svg.setAttribute("viewBox", `0 0 ${svg.getAttribute("width")} ${svg.getAttribute("height")}`);
-      svg.removeAttribute("width"); svg.removeAttribute("height");
-    }
-  }, [product.barcode]);
+  async function print() {
+    setBusy(true);
+    try {
+      const r = await printLabels([{ label: product, copies }], size);
+      if (!r.ok) toast.error(`Этикетка не напечатана: ${r.error ?? "ошибка принтера"}`);
+    } finally { setBusy(false); }
+  }
 
   if (typeof document === "undefined") return null;
   return createPortal(
-    <div id="pos-label-overlay" className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-      <style>{`@media print { @page{size:58mm auto;margin:0} html,body{width:58mm!important} body > *:not(#pos-label-overlay){display:none!important} #pos-label-overlay{position:static!important;display:block!important;background:white!important;padding:0!important} #pos-label-overlay .no-print{display:none!important} #pos-label-overlay .label-card{box-shadow:none!important;border:none!important;margin:0!important;padding:0!important;max-width:none!important;width:58mm!important;background:white!important} #pos-label-overlay .label-body{border:none!important;border-radius:0!important;padding:2mm 3mm!important;width:58mm!important;box-sizing:border-box} #pos-label-overlay .label-body svg{width:100%!important;height:auto!important} #pos-label-overlay .label-body p{margin:0 0 1mm} }`}</style>
-      <div className="label-card w-full max-w-sm rounded-xl border bg-background p-5 shadow-2xl">
-        <div className="no-print mb-4 flex items-center justify-between">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-sm rounded-xl border bg-background p-5 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Этикетка товара</h2>
           <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-muted" aria-label="Закрыть"><X className="h-5 w-5" /></button>
         </div>
-        <div id="pos-label-print" className="label-body rounded-lg border bg-white p-5 text-center text-black">
-          <p className="text-lg font-bold">{product.name}</p>
-          <p className="mt-1 text-2xl font-bold">{formatCurrency(product.price)}{isFractionalUnit(product.unit) ? ` / ${unitLabel(product.unit, true)}` : ""}</p>
-          <svg ref={svgRef} className="mx-auto mt-3 w-full max-w-[240px]" />
+        <div className="mb-3 flex justify-center rounded-lg border bg-muted/40 p-3">
+          <iframe
+            title="Предпросмотр этикетки"
+            srcDoc={labelsDocument([product], size)}
+            style={{ width: `${size.widthMm}mm`, height: `${size.heightMm}mm`, border: "1px solid #bbb", background: "#fff" }}
+          />
         </div>
-        <button onClick={() => { if (programCanPrint()) void printElementOnProgram("pos-label-print").then((r) => { if (!r.ok) toast.error(`Этикетка не напечатана: ${r.error ?? "ошибка принтера"}`); }); else window.print(); }} className="no-print mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary font-medium text-primary-foreground hover:bg-primary/90">
-          <Printer className="h-4 w-4" /> Печать
+        <LabelSizePicker value={size} onChange={setSize} className="mb-3" />
+        <label className="mb-3 flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Копий</span>
+          <input type="number" min={1} max={99} value={copies} onChange={(e) => setCopies(Math.min(99, Math.max(1, Number(e.target.value) || 1)))} className="h-9 w-16 rounded-md border bg-background px-2 text-right" />
+        </label>
+        {printer !== undefined && (
+          <p className="mb-3 text-xs text-muted-foreground">
+            {printer ? `Принтер этикеток: ${printer}` : "Принтер этикеток (XP-365B) не найден — этикетка уйдёт на чековый принтер"}
+          </p>
+        )}
+        <button onClick={() => void print()} disabled={busy} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} Печать
         </button>
       </div>
     </div>,

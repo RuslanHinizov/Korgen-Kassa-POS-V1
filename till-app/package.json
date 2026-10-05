@@ -19,6 +19,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "label-tspl.js",
       "web/**/*",
       "package.json"
     ],

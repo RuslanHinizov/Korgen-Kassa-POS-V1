@@ -1,25 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { drawBarcode } from "@/lib/draw-barcode";
+import { useState } from "react";
 import { Printer, WandSparkles, X } from "lucide-react";
-import { isFractionalUnit, unitLabel } from "@/lib/units";
+import { printLabels } from "@/lib/label-print";
+import { LabelSizePicker, useLabelSize } from "@/components/labels/label-size-picker";
 
 export interface LabelProduct { id: string; name: string; barcode: string | null; price: number; unit: string }
 
-function LabelBarcode({ code }: { code: string }) {
-  const ref = useRef<SVGSVGElement>(null);
-  useEffect(() => {
-    if (ref.current) drawBarcode(ref.current, code, { displayValue: true, margin: 0, height: 36, width: 1.3, fontSize: 11 });
-  }, [code]);
-  return <svg ref={ref} className="mx-auto max-w-full" />;
-}
-
-/** Prints a sheet of price labels (one per copy) for several products at once. */
+/** Prints price labels (one sticky label per copy) for several products at once, on the label printer. */
 export function MultiLabelModal({ products, onClose }: { products: LabelProduct[]; onClose: () => void }) {
   const [items, setItems] = useState(products);
   const [copies, setCopies] = useState<Record<string, number>>(() => Object.fromEntries(products.map((p) => [p.id, 1])));
   const [busy, setBusy] = useState(false);
+  const [size, setSize] = useLabelSize();
   const missing = items.filter((p) => !p.barcode);
 
   async function generateMissing() {
@@ -37,17 +30,23 @@ export function MultiLabelModal({ products, onClose }: { products: LabelProduct[
     setBusy(false);
   }
 
-  const printable = items.filter((p) => p.barcode).flatMap((p) => Array.from({ length: Math.max(1, copies[p.id] ?? 1) }, () => p));
+  const printable = items.filter((p) => p.barcode);
+  const total = printable.reduce((n, p) => n + Math.max(1, copies[p.id] ?? 1), 0);
+
+  async function print() {
+    const r = await printLabels(printable.map((p) => ({ label: { name: p.name, price: p.price, unit: p.unit, barcode: p.barcode! }, copies: Math.max(1, copies[p.id] ?? 1) })), size);
+    if (!r.ok) alert(`Этикетки не напечатаны: ${r.error ?? "ошибка принтера"}`);
+  }
 
   return (
-    <div id="multi-label-overlay" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <style>{`@media print { body > *:not(#multi-label-overlay){display:none!important} #multi-label-overlay{position:static!important;display:block!important;background:white!important;padding:0!important} #multi-label-overlay .no-print{display:none!important} #multi-label-overlay .label-sheet{display:grid!important;grid-template-columns:repeat(3,1fr);gap:4mm;max-height:none!important;overflow:visible!important;border:none!important;padding:0!important} #multi-label-overlay .label-card{break-inside:avoid;border:1px dashed #999!important} #multi-label-overlay .sheet-wrap{box-shadow:none!important;border:none!important;max-width:none!important} }`}</style>
-      <div className="sheet-wrap flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border bg-background p-5 shadow-2xl">
-        <div className="no-print mb-3 flex items-center justify-between">
-          <h2 className="font-semibold">Печать этикеток ({printable.length})</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border bg-background p-5 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-semibold">Печать этикеток ({total})</h2>
           <button onClick={onClose} aria-label="Закрыть"><X className="h-5 w-5" /></button>
         </div>
-        <div className="no-print mb-3 max-h-40 space-y-1 overflow-y-auto rounded-md border p-2 text-sm">
+        <LabelSizePicker value={size} onChange={setSize} className="mb-3" />
+        <div className="mb-3 min-h-0 flex-1 space-y-1 overflow-y-auto rounded-md border p-2 text-sm">
           {items.map((p) => (
             <div key={p.id} className="flex items-center justify-between gap-3">
               <span className="truncate">{p.name}{!p.barcode && <span className="ml-2 text-xs text-destructive">нет штрихкода</span>}</span>
@@ -59,21 +58,12 @@ export function MultiLabelModal({ products, onClose }: { products: LabelProduct[
           ))}
         </div>
         {missing.length > 0 && (
-          <button onClick={generateMissing} disabled={busy} className="no-print mb-3 flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
+          <button onClick={generateMissing} disabled={busy} className="mb-3 flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
             <WandSparkles className="h-4 w-4" />{busy ? "Создание…" : `Создать EAN‑13 для товаров без штрихкода (${missing.length})`}
           </button>
         )}
-        <div className="label-sheet grid flex-1 grid-cols-2 gap-3 overflow-y-auto rounded-md border bg-white p-3 text-black sm:grid-cols-3">
-          {printable.map((p, i) => (
-            <div key={`${p.id}-${i}`} className="label-card rounded border p-2 text-center">
-              <p className="line-clamp-2 text-xs font-bold leading-tight">{p.name}</p>
-              <p className="my-1 text-base font-bold">₸{p.price.toFixed(2)}{isFractionalUnit(p.unit) ? ` / ${unitLabel(p.unit, true)}` : ""}</p>
-              <LabelBarcode code={p.barcode!} />
-            </div>
-          ))}
-          {printable.length === 0 && <p className="col-span-full py-6 text-center text-sm text-muted-foreground">Нет товаров со штрихкодом</p>}
-        </div>
-        <button onClick={() => window.print()} disabled={printable.length === 0} className="no-print mt-3 flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">
+        <p className="mb-2 text-xs text-muted-foreground">В окне печати выберите принтер этикеток Xprinter XP-365B (браузер запомнит выбор). Одна этикетка — одна страница выбранного размера.</p>
+        <button onClick={() => void print()} disabled={printable.length === 0} className="flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">
           <Printer className="h-4 w-4" />Печать
         </button>
       </div>
