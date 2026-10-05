@@ -1,7 +1,7 @@
 {
   "name": "korgen-kassa-till",
   "productName": "Korgen Kassa",
-  "version": "1.1.18",
+  "version": "1.1.19",
   "description": "Korgen Kassa till program (offline-first)",
   "main": "main.js",
   "private": true,

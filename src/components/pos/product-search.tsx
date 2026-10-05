@@ -356,9 +356,13 @@ export function KioskSearchBar() {
     try {
       // Server first; with no connection (or a server that does not answer) the till searches its own copy.
       let found: ProductResult[];
-      if (typeof navigator === "undefined" || navigator.onLine) {
+      // A barcode that the till's own copy knows is answered at once: waiting for a slow internet made products appear late.
+      const local = /^[A-Za-z0-9]{6,20}$/.test(q.trim()) ? ((await searchLocal(q)) as unknown as ProductResult[]) : [];
+      if (local.some((item) => item.barcode === q.trim() || item.scanQuantity)) {
+        found = local;
+      } else if (typeof navigator === "undefined" || navigator.onLine) {
         try {
-          const res = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
+          const res = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`, { signal: AbortSignal.timeout(2500) });
           found = res.ok ? await res.json() as ProductResult[] : (await searchLocal(q)) as unknown as ProductResult[];
         } catch {
           found = (await searchLocal(q)) as unknown as ProductResult[];
