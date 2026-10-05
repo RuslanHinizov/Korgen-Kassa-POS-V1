@@ -2,22 +2,7 @@
 
 import { cookies, headers } from "next/headers";
 
-const SUPPORTED_LOCALES = [
-  "en",
-  "si",
-  "ta",
-  "fr",
-  "es",
-  "de",
-  "ar",
-  "zh",
-  "hi",
-  "pt",
-  "ja",
-  "ko",
-  "id",
-  "ru",
-];
+const SUPPORTED_LOCALES = ["ru", "en"];
 
 export async function setLocale(locale: string) {
   if (!SUPPORTED_LOCALES.includes(locale)) return;

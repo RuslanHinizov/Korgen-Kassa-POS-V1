@@ -138,6 +138,7 @@ model Store {
   transfersIn      StoreTransfer[] @relation("StoreTransferDest")
   referenceBooks   ReferenceBook[]
   userAssignments  UserStoreAssignment[]
+  documentCounters DocumentCounter[]
 }
 
 // ============================================================
@@ -538,7 +539,7 @@ model Sale {
   id             String        @id @default(cuid())
   /// Справочники chosen at the kassa: [{ bookId, bookName, entryId, entryName }] (snapshot).
   referenceValues Json?
-  documentNo     Int           @default(autoincrement())
+  documentNo     Int           @default(0)
   storeId        String
   userId         String
   customerId     String?
@@ -692,7 +693,7 @@ enum WriteOffReason {
 model WriteOff {
   id           String         @id @default(cuid())
   storeId      String
-  documentNo   Int            @default(autoincrement())
+  documentNo   Int            @default(0)
   userId       String
   status       WriteOffStatus @default(DRAFT)
   writeOffDate DateTime       @default(now())
@@ -736,7 +737,7 @@ model WriteOffItem {
 model StoreTransfer {
   id         String              @id @default(cuid())
   storeId    String              // source store
-  documentNo Int                 @default(autoincrement())
+  documentNo Int                 @default(0)
   toStoreId  String              // destination store
   userId     String
   status     StoreTransferStatus @default(DRAFT)
@@ -786,7 +787,7 @@ enum StockInStatus {
 model StockIn {
   id          String        @id @default(cuid())
   storeId     String
-  documentNo  Int           @default(autoincrement())
+  documentNo  Int           @default(0)
   userId      String
   status      StockInStatus @default(DRAFT)
   stockInDate DateTime      @default(now())
@@ -865,7 +866,7 @@ model CustomerReturn {
   /// Справочники chosen at the kassa: [{ bookId, bookName, entryId, entryName }] (snapshot).
   referenceValues Json?
   storeId     String
-  documentNo  Int                  @default(autoincrement())
+  documentNo  Int                  @default(0)
   status      CustomerReturnStatus @default(DRAFT)
   customerId  String?
   userId      String
@@ -1025,7 +1026,7 @@ enum PurchaseReceiptStatus {
 model PurchaseReceipt {
   id          String                @id @default(cuid())
   storeId     String
-  documentNo  Int                   @default(autoincrement())
+  documentNo  Int                   @default(0)
   status      PurchaseReceiptStatus @default(DRAFT)
   supplierId  String?
   userId      String
@@ -1102,7 +1103,7 @@ enum SupplierReturnStatus {
 model SupplierReturn {
   id          String               @id @default(cuid())
   storeId     String
-  documentNo  Int                  @default(autoincrement())
+  documentNo  Int                  @default(0)
   status      SupplierReturnStatus @default(DRAFT)
   supplierId  String?
   userId      String
@@ -1186,7 +1187,7 @@ model FinanceAccount {
 model Cashbox {
   id        String   @id @default(cuid())
   storeId   String
-  no        Int      @default(autoincrement())
+  no        Int      @default(0)
   name      String
   active    Boolean  @default(true)
   accountId String?
@@ -1256,7 +1257,7 @@ model ExpenseType {
 model Payment {
   id            String           @id @default(cuid())
   storeId       String
-  documentNo    Int              @default(autoincrement())
+  documentNo    Int              @default(0)
   direction     PaymentDirection
   amount        Decimal          @db.Decimal(12, 2)
   expenseTypeId String?
@@ -1278,7 +1279,7 @@ model Payment {
 model Transfer {
   id            String   @id @default(cuid())
   storeId       String
-  documentNo    Int      @default(autoincrement())
+  documentNo    Int      @default(0)
   fromAccountId String
   toAccountId   String
   amount        Decimal  @db.Decimal(12, 2)
@@ -1319,7 +1320,7 @@ model InventoryLot {
 model Stocktake {
   id         String          @id @default(cuid())
   storeId    String
-  documentNo Int             @default(autoincrement())
+  documentNo Int             @default(0)
   userId     String
   status     StocktakeStatus @default(DRAFT)
   note       String?
@@ -1806,4 +1807,16 @@ model BusinessSettings {
   updatedAt        DateTime @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+/// Last number given per market and document kind (Sale, PurchaseReceipt, …). A database trigger (migration
+/// 20261005120000_per_store_document_numbers) numbers each market's documents 1, 2, 3 … on its own, without gaps.
+model DocumentCounter {
+  storeId String
+  kind    String
+  last    Int    @default(0)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@id([storeId, kind])
 }

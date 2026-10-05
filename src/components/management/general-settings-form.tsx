@@ -191,7 +191,7 @@ export function GeneralSettingsForm() {
           <div className="flex items-center gap-3">
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt="" className="h-16 w-16 rounded-lg border object-contain bg-white" />
+              <img src={logoUrl} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} className="h-16 w-16 rounded-lg border object-contain bg-white" />
             ) : (
               <span className="text-muted-foreground flex h-16 w-16 items-center justify-center rounded-lg border">
                 <ImageOff className="h-6 w-6" />
@@ -247,20 +247,8 @@ export function GeneralSettingsForm() {
             {...register("language")}
             className="border-input bg-background ring-offset-background focus-visible:ring-ring flex h-10 w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
           >
+            <option value="ru">Русский</option>
             <option value="en">English</option>
-            <option value="si">සිංහල (Sinhala)</option>
-            <option value="ta">தமிழ் (Tamil)</option>
-            <option value="ar">العربية (Arabic)</option>
-            <option value="zh">中文 (Chinese)</option>
-            <option value="de">Deutsch (German)</option>
-            <option value="es">Español (Spanish)</option>
-            <option value="fr">Français (French)</option>
-            <option value="hi">हिन्दी (Hindi)</option>
-            <option value="id">Bahasa Indonesia</option>
-            <option value="ja">日本語 (Japanese)</option>
-            <option value="ko">한국어 (Korean)</option>
-            <option value="pt">Português (Portuguese)</option>
-            <option value="ru">Русский (Russian)</option>
           </select>
         </div>
       </section>

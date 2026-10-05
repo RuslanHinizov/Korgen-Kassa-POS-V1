@@ -3,7 +3,8 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { getStoreId } from "@/lib/store-context";
 
-const SUPPORTED_LOCALES = ["en", "si", "ta", "fr", "es", "de", "ar", "zh", "hi", "pt", "ja", "ko", "id", "ru"] as const;
+// Only the two complete translations are offered; the other files in messages/ lack ~130 keys and would show raw key names.
+const SUPPORTED_LOCALES = ["ru", "en"] as const;
 type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 function isValidLocale(value: string | undefined): value is Locale {
@@ -19,18 +20,19 @@ export default getRequestConfig(async () => {
     return { locale: cookieLocale, messages };
   }
 
-  // Fallback: read from DB business settings
-  let locale: Locale = "en";
+  // Fallback: the market's own language setting. The product is made for Kazakhstan, so a page that has no market (the
+  // till screens, sign-in) or a missing setting is Russian, never English.
+  let locale: Locale = "ru";
   try {
     const storeId = await getStoreId();
     const settings = await prisma.businessSettings.findUnique({
       where: { storeId },
       select: { language: true },
     });
-    const lang = settings?.language ?? "en";
+    const lang = settings?.language ?? "ru";
     if (isValidLocale(lang)) locale = lang;
   } catch {
-    // DB not available — use English
+    // DB not available — use Russian
   }
 
   const messages = (await import(`../../messages/${locale}.json`)).default;

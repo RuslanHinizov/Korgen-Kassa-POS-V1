@@ -103,7 +103,9 @@ export function Receipt({ data, settings }: ReceiptProps) {
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={settings.logoUrl}
-            alt="logo"
+            alt=""
+            // a logo file that is gone (deleted upload) must not print as a broken-image box
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
             className="h-[4.5rem] mx-auto mb-2 object-contain"
           />
         )}
