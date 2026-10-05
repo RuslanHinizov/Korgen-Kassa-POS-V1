@@ -422,8 +422,10 @@ export function POSScreen({ cashierName: serverCashierName, cashierRole: serverC
     });
     setActiveItemId(id);
   }
+  // A tap anywhere on a line selects that line (and only it); the tick boxes are for choosing two or more lines.
   function selectRow(id: string) {
     setActiveItemId(id);
+    setSelected((prev) => (prev.size === 1 && prev.has(id) ? prev : new Set([id])));
   }
 
   // UMAG's «СКИДКА» box in the table header: a percent for the ticked lines (or the active line when none is ticked).
@@ -712,7 +714,7 @@ export function POSScreen({ cashierName: serverCashierName, cashierRole: serverC
                   onClick={() => selectRow(item.id)}
                   className={cn(
                     "hover:bg-muted/40 cursor-pointer",
-                    activeItemId === item.id && "bg-slate-300/70"
+                    (activeItemId === item.id || selected.has(item.id)) && "bg-slate-300/70"
                   )}
                 >
                   <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>

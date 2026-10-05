@@ -4,10 +4,15 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getStoreId } from "@/lib/store-context";
 import { z } from "zod";
+import { Prisma } from "@/generated/prisma/client";
 
 const schema = z.union([
   z.object({ productIds: z.array(z.string().min(1)).min(1) }),
   z.object({ categoryId: z.string().min(1) }),
+  // «Добавить все найденные»: the same filters as the picker, applied on the server to EVERY match (not just the visible page)
+  z.object({ filter: z.object({
+    categoryId: z.string().optional(), supplierId: z.string().optional(), type: z.string().optional(), stock: z.string().optional(),
+  }) }),
 ]);
 
 // POST /api/inventory/stocktakes/:id/items/bulk — add several products at once,
@@ -29,13 +34,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "На этом этапе нельзя добавлять товары" }, { status: 409 });
   }
 
-  const existingIds = new Set(
-    (await prisma.stocktakeItem.findMany({ where: { stocktakeId }, select: { productId: true } })).map((i) => i.productId)
-  );
-
   let productIdsToAdd: string[];
   if ("productIds" in parsed.data) {
     productIdsToAdd = parsed.data.productIds;
+  } else if ("filter" in parsed.data) {
+    const f = parsed.data.filter;
+    const typeWhere: Prisma.ProductWhereInput =
+      f.type === "factory" ? { productType: "REGULAR", barcode: { not: null }, NOT: { barcode: { startsWith: "290" } } }
+      : f.type === "internal" ? { productType: "REGULAR", barcode: { startsWith: "290" } }
+      : f.type === "weight" ? { unit: "kg" }
+      : f.type === "service" ? { productType: "SERVICE" }
+      : f.type === "bundle" ? { productType: "BUNDLE" }
+      : {};
+    const matches = await prisma.product.findMany({
+      where: {
+        storeId, deletedAt: null, ...typeWhere,
+        ...(f.categoryId ? { categoryId: f.categoryId } : {}),
+        ...(f.supplierId ? { supplierId: f.supplierId } : {}),
+        ...(f.stock === "nonzero" ? { stock: { gt: 0 } } : f.stock === "zero" ? { stock: { lte: 0 } } : {}),
+      },
+      select: { id: true },
+    });
+    productIdsToAdd = matches.map((p) => p.id);
   } else {
     const rootCategory = await prisma.category.findFirst({ where: { id: parsed.data.categoryId, storeId }, select: { id: true } });
     if (!rootCategory) return NextResponse.json({ error: "Категория не найдена" }, { status: 404 });
@@ -53,26 +73,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     productIdsToAdd = inCategory.map((p) => p.id);
   }
 
-  const products = await prisma.product.findMany({
-    where: { storeId, deletedAt: null, id: { in: productIdsToAdd, notIn: [...existingIds] } },
-    select: { id: true, stock: true },
-  });
+  // ONE statement for any number of products; products already in the document are skipped.
+  // Starts counted at 0, openly shown, flagged until scanned (matches real UMAG).
+  const added = productIdsToAdd.length === 0 ? 0 : await prisma.$executeRaw`
+    INSERT INTO "StocktakeItem" (id, "stocktakeId", "productId", "expectedQty", "countedQty", difference, "scannedAt")
+    SELECT gen_random_uuid()::text, ${stocktakeId}, p.id, p.stock, 0, -p.stock, NULL
+    FROM "Product" p WHERE p."storeId" = ${storeId} AND p."deletedAt" IS NULL AND p.id = ANY(${productIdsToAdd}::text[])
+    ON CONFLICT ("stocktakeId", "productId") DO NOTHING`;
 
-  if (products.length === 0) return NextResponse.json({ added: 0 });
-
-  await prisma.$transaction([
-    prisma.stocktakeItem.createMany({
-      data: products.map((p) => {
-        const expectedQty = p.stock;
-        return {
-          stocktakeId, productId: p.id, expectedQty,
-          // Matches real UMAG: starts counted at 0, openly shown, flagged until scanned.
-          countedQty: 0, difference: -Number(expectedQty), scannedAt: null,
-        };
-      }),
-    }),
-    ...(stocktake.status === "DRAFT" ? [prisma.stocktake.update({ where: { id: stocktakeId }, data: { status: "COUNTING" as const } })] : []),
-  ]);
-
-  return NextResponse.json({ added: products.length });
+  if (added > 0 && stocktake.status === "DRAFT") await prisma.stocktake.update({ where: { id: stocktakeId }, data: { status: "COUNTING" } });
+  return NextResponse.json({ added });
 }

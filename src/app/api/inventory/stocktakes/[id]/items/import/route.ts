@@ -28,27 +28,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "На этом этапе нельзя добавлять товары" }, { status: 409 });
   }
 
-  let added = 0;
-  const notFound: string[] = [];
-  const now = new Date();
-  for (const row of parsed.data.items) {
-    const product = await prisma.product.findFirst({ where: { barcode: row.barcode, storeId, deletedAt: null }, select: { id: true, stock: true } });
-    if (!product) { notFound.push(row.barcode); continue; }
-
-    const existing = await prisma.stocktakeItem.findFirst({ where: { stocktakeId, productId: product.id } });
-    if (existing) {
-      const countedQty = Number(existing.countedQty ?? 0) + row.quantity;
-      await prisma.stocktakeItem.update({
-        where: { id: existing.id },
-        data: { countedQty, difference: countedQty - Number(existing.expectedQty), scannedAt: now },
-      });
-    } else {
-      const expectedQty = Number(product.stock);
-      await prisma.stocktakeItem.create({
-        data: { stocktakeId, productId: product.id, expectedQty, countedQty: row.quantity, difference: row.quantity - expectedQty, scannedAt: now },
-      });
-    }
-    added++;
+  // merge repeated barcodes first, then look every product up in ONE query and write every line in ONE statement
+  // (a line-by-line loop of 3 queries each took minutes for a big file)
+  const wanted = new Map<string, number>();
+  for (const row of parsed.data.items) wanted.set(row.barcode, (wanted.get(row.barcode) ?? 0) + row.quantity);
+  const products = await prisma.product.findMany({
+    where: { storeId, deletedAt: null, barcode: { in: [...wanted.keys()] } },
+    select: { id: true, barcode: true },
+    orderBy: { id: "asc" },
+  });
+  const byBarcode = new Map<string, string>();
+  for (const p of products) if (p.barcode && !byBarcode.has(p.barcode)) byBarcode.set(p.barcode, p.id);
+  const notFound = [...wanted.keys()].filter((b) => !byBarcode.has(b));
+  const found = [...wanted.entries()].filter(([b]) => byBarcode.has(b));
+  const added = found.length;
+  if (added > 0) {
+    const ids = found.map(([b]) => byBarcode.get(b)!);
+    const qtys = found.map(([, q]) => String(q));
+    await prisma.$executeRaw`
+      INSERT INTO "StocktakeItem" (id, "stocktakeId", "productId", "expectedQty", "countedQty", difference, "scannedAt")
+      SELECT gen_random_uuid()::text, ${stocktakeId}, p.id, p.stock, v.qty, v.qty - p.stock, now()
+      FROM unnest(${ids}::text[], ${qtys}::numeric[]) AS v(pid, qty) JOIN "Product" p ON p.id = v.pid
+      ON CONFLICT ("stocktakeId", "productId") DO UPDATE SET
+        "countedQty" = COALESCE("StocktakeItem"."countedQty", 0) + EXCLUDED."countedQty",
+        difference = COALESCE("StocktakeItem"."countedQty", 0) + EXCLUDED."countedQty" - "StocktakeItem"."expectedQty",
+        "scannedAt" = now()`;
   }
 
   if (added > 0) await prisma.stocktake.updateMany({ where: { id: stocktakeId, status: "DRAFT" }, data: { status: "COUNTING" } });

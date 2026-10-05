@@ -5,7 +5,7 @@ import { StoreLink as Link } from "@/components/store/store-link";
 import { useStoreRouter as useRouter } from "@/components/store/use-store-router";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
-import { AlertCircle, Check, Download, Loader2, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
+import { AlertCircle, Camera, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Loader2, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
 import { isFractionalUnit, parseQuantityInput, unitLabel } from "@/lib/units";
 import { useSession } from "@/lib/auth-client";
 import { useAnchoredPopover, AnchoredPopover } from "@/components/ui/anchored-popover";
@@ -26,16 +26,10 @@ interface Item {
 interface Doc {
   id: string; documentNo: number; status: Status; note: string | null; valuateAtCost: boolean;
   countedAt: string; postedAt: string | null; userName: string; items: Item[];
+  /** lines in the whole document / those already scanned / those matching the filters; money totals of the filtered lines */
+  itemCount: number; scannedCount: number; filteredCount: number; totalCost: number; totalSale: number;
 }
 interface PickProduct { id: string; name: string; price: number; stock: number; unit?: string; barcode?: string | null }
-
-function itemType(item: Item): string {
-  if (item.productType === "SERVICE") return "service";
-  if (item.productType === "BUNDLE") return "bundle";
-  if (item.unit === "kg") return "weight";
-  if (item.barcode?.startsWith("290")) return "internal";
-  return "factory";
-}
 
 export function StocktakeDetail({ id }: { id: string }) {
   const router = useRouter();
@@ -54,6 +48,10 @@ export function StocktakeDetail({ id }: { id: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState("");
   const [diffFilter, setDiffFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+  const loadSeq = useRef(0);
 
   const action = useAnchoredPopover();
   const filter = useAnchoredPopover();
@@ -67,15 +65,30 @@ export function StocktakeDetail({ id }: { id: string }) {
     }).catch(() => {});
   }, []);
 
+  // A document can hold every product of the market, so only ONE page of lines is ever fetched and drawn. Search and the
+  // filters run on the server; an older answer that arrives late is dropped.
   const load = useCallback(async () => {
-    const r = await fetch(`/api/inventory/stocktakes/${id}`);
+    const seq = ++loadSeq.current;
+    const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    if (search.trim()) qs.set("q", search.trim());
+    if (typeFilter) qs.set("type", typeFilter);
+    if (diffFilter) qs.set("diff", diffFilter);
+    const r = await fetch(`/api/inventory/stocktakes/${id}?${qs}`);
+    if (seq !== loadSeq.current) return;
     if (!r.ok) { toast.error("Документ не найден"); router.push("/products/stocktake"); return; }
     const d = await r.json();
+    if (seq !== loadSeq.current) return;
     setDoc(d.stocktake);
-    setSelected(new Set());
     setLoading(false);
-  }, [id, router]);
-  useEffect(() => { load(); }, [load]);
+    // lines were deleted and this page no longer exists: go to the last one
+    const pages = Math.max(1, Math.ceil(d.stocktake.filteredCount / pageSize));
+    if (page > pages) setPage(pages);
+  }, [id, router, page, pageSize, search, typeFilter, diffFilter]);
+  useEffect(() => {
+    // typing in the search box is not sent letter by letter
+    const t = setTimeout(() => { void load(); }, search ? 250 : 0);
+    return () => clearTimeout(t);
+  }, [load, search]);
 
   // Matches real UMAG: no separate review stage — Провести is available directly
   // from Черновик/Подсчёт, the document just isn't editable once Проведён.
@@ -92,13 +105,26 @@ export function StocktakeDetail({ id }: { id: string }) {
     } finally { setBusy(false); }
   }
 
+  // Entering a count changes just that line on the screen (and the totals by the difference) — the whole document is
+  // not fetched again for every typed number.
   async function updateCounted(itemId: string, countedQty: number) {
-    setBusy(true);
-    try {
-      const r = await fetch(`/api/inventory/stocktakes/${id}/items/${itemId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ countedQty }) });
-      if (!r.ok) { toast.error("Не удалось сохранить"); return; }
-      load();
-    } finally { setBusy(false); }
+    const r = await fetch(`/api/inventory/stocktakes/${id}/items/${itemId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ countedQty }) });
+    if (!r.ok) { toast.error("Не удалось сохранить"); return; }
+    const saved = (await r.json()).item as { scannedAt: string | null };
+    setDoc((d) => {
+      if (!d) return d;
+      const old = d.items.find((i) => i.id === itemId);
+      if (!old) return d;
+      const diff = countedQty - old.expectedQty;
+      const oldDiff = old.difference ?? 0;
+      return {
+        ...d,
+        scannedCount: d.scannedCount + (old.scannedAt ? 0 : 1),
+        totalCost: d.totalCost + (diff - oldDiff) * (old.cost ?? 0),
+        totalSale: d.totalSale + (diff - oldDiff) * old.price,
+        items: d.items.map((i) => (i.id === itemId ? { ...i, countedQty, difference: diff, scannedAt: saved.scannedAt ?? i.scannedAt } : i)),
+      };
+    });
   }
 
   async function deleteItem(itemId: string) {
@@ -106,6 +132,7 @@ export function StocktakeDetail({ id }: { id: string }) {
     try {
       const r = await fetch(`/api/inventory/stocktakes/${id}/items/${itemId}`, { method: "DELETE" });
       if (!r.ok) { toast.error("Не удалось удалить"); return; }
+      setSelected((s) => { const next = new Set(s); next.delete(itemId); return next; });
       load();
     } finally { setBusy(false); }
   }
@@ -116,7 +143,11 @@ export function StocktakeDetail({ id }: { id: string }) {
     if (!confirm(`Удалить выбранные строки (${selected.size})?`)) return;
     setBusy(true);
     try {
-      await Promise.all([...selected].map((itemId) => fetch(`/api/inventory/stocktakes/${id}/items/${itemId}`, { method: "DELETE" })));
+      const r = await fetch(`/api/inventory/stocktakes/${id}/items/delete`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemIds: [...selected] }),
+      });
+      if (!r.ok) { toast.error("Не удалось удалить"); return; }
+      setSelected(new Set());
       load();
     } finally { setBusy(false); }
   }
@@ -124,8 +155,14 @@ export function StocktakeDetail({ id }: { id: string }) {
   function toggleSelected(itemId: string) {
     setSelected((s) => { const next = new Set(s); if (next.has(itemId)) next.delete(itemId); else next.add(itemId); return next; });
   }
+  // the header checkbox works on the lines of the page on screen
   function toggleSelectAll(rows: Item[]) {
-    setSelected((s) => (s.size === rows.length ? new Set() : new Set(rows.map((r) => r.id))));
+    setSelected((s) => {
+      const next = new Set(s);
+      if (rows.length > 0 && rows.every((r) => next.has(r.id))) rows.forEach((r) => next.delete(r.id));
+      else rows.forEach((r) => next.add(r.id));
+      return next;
+    });
   }
 
   async function createProduct() {
@@ -215,18 +252,13 @@ export function StocktakeDetail({ id }: { id: string }) {
   // UMAG never shows Закупочная цена to Складской работник, regardless of the inventory-hide setting.
   const canSeeCost = role !== "WAREHOUSE";
 
-  const rows = doc.items.filter((item) => {
-    if (typeFilter && itemType(item) !== typeFilter) return false;
-    const diff = item.difference ?? 0;
-    if (diffFilter === "diff" && diff === 0) return false;
-    if (diffFilter === "nodiff" && diff !== 0) return false;
-    if (diffFilter === "surplus" && diff <= 0) return false;
-    if (diffFilter === "shortage" && diff >= 0) return false;
-    return true;
-  });
+  const rows = doc.items;
+  const totalPages = Math.max(1, Math.ceil(doc.filteredCount / pageSize));
+  const firstIndex = doc.filteredCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastIndex = Math.min(doc.filteredCount, page * pageSize);
   const colCount = 3 + (hideStockCols ? 0 : 2) + 1 + (hideAmountCols ? 0 : (canSeeCost ? 2 : 1)) + (editable ? 2 : 1);
-  const totalCost = rows.reduce((s, i) => s + (i.difference ?? 0) * (i.cost ?? 0), 0);
-  const totalSale = rows.reduce((s, i) => s + (i.difference ?? 0) * i.price, 0);
+  const totalCost = doc.totalCost;
+  const totalSale = doc.totalSale;
 
   return (
     <div className="p-4 sm:p-6 space-y-3">
@@ -246,6 +278,11 @@ export function StocktakeDetail({ id }: { id: string }) {
           <button onClick={saveDoc} disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-primary px-3 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50">
             Сохранить
           </button>
+        )}
+        {editable && (
+          <Link href={`/products/stocktake/${id}/scan`} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-primary px-3 text-sm font-medium text-primary hover:bg-primary/10">
+            <Camera className="h-4 w-4" /> Сканирование
+          </Link>
         )}
         <Link href="/products/stocktake" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-accent">
           Закрыть
@@ -271,6 +308,8 @@ export function StocktakeDetail({ id }: { id: string }) {
           </button>
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground">Позиций в документе: {doc.itemCount} · отсканировано: {doc.scannedCount}</p>
 
       {doc.note && !editable && <p className="text-sm text-muted-foreground">Комментарий: {doc.note}</p>}
 
@@ -319,7 +358,7 @@ export function StocktakeDetail({ id }: { id: string }) {
             <SlidersHorizontal className="h-4 w-4" /> Фильтр
           </button>
           <div className="flex-1 min-w-[16rem]">
-            <ProductPicker onPick={addProduct} busy={busy} existingIds={doc.items.map((i) => i.productId)} />
+            <ProductPicker onPick={addProduct} busy={busy} />
           </div>
         </div>
       )}
@@ -335,8 +374,12 @@ export function StocktakeDetail({ id }: { id: string }) {
       {filter.open && filter.pos && (
         <AnchoredPopover pos={filter.pos} onClose={filter.close} className="w-72 space-y-3">
           <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">Название / штрихкод</label>
+            <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Найти в документе" className="h-9 w-full rounded-md border bg-background px-2 text-sm" />
+          </div>
+          <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Тип товара</label>
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="h-9 w-full rounded-md border bg-background px-2 text-sm">
+            <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }} className="h-9 w-full rounded-md border bg-background px-2 text-sm">
               <option value="">Все</option>
               <option value="factory">Заводские</option>
               <option value="weight">Весовые</option>
@@ -347,7 +390,7 @@ export function StocktakeDetail({ id }: { id: string }) {
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Количество и разница</label>
-            <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} className="h-9 w-full rounded-md border bg-background px-2 text-sm">
+            <select value={diffFilter} onChange={(e) => { setDiffFilter(e.target.value); setPage(1); }} className="h-9 w-full rounded-md border bg-background px-2 text-sm">
               <option value="">Не выбрано</option>
               <option value="diff">С расхождением</option>
               <option value="nodiff">Без расхождения</option>
@@ -361,7 +404,6 @@ export function StocktakeDetail({ id }: { id: string }) {
       {addModalOpen && (
         <AddProductsModal
           stocktakeId={id}
-          existingIds={doc.items.map((i) => i.productId)}
           onClose={() => setAddModalOpen(false)}
           onAdded={load}
         />
@@ -374,7 +416,7 @@ export function StocktakeDetail({ id }: { id: string }) {
             <tr className="border-b bg-muted/50 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {editable && (
                 <th className="w-10 px-3 py-2">
-                  <input type="checkbox" checked={rows.length > 0 && selected.size === rows.length} onChange={() => toggleSelectAll(rows)} />
+                  <input type="checkbox" checked={rows.length > 0 && rows.every((r) => selected.has(r.id))} onChange={() => toggleSelectAll(rows)} />
                 </th>
               )}
               <th className="px-3 py-2 text-left">№</th>
@@ -402,7 +444,7 @@ export function StocktakeDetail({ id }: { id: string }) {
                 {editable && (
                   <td className="px-3 py-2"><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} /></td>
                 )}
-                <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
+                <td className="px-3 py-2 text-muted-foreground">{(page - 1) * pageSize + idx + 1}</td>
                 <td className="px-3 py-2">
                   <Link href={`/products/${item.productId}/edit`} target="_blank" className="font-medium text-primary hover:underline">{item.productName}</Link>
                 </td>
@@ -491,11 +533,27 @@ export function StocktakeDetail({ id }: { id: string }) {
           </span>
         </div>
       </div>
+
+      <div className="flex items-center justify-between text-sm">
+        <div className="flex items-center gap-1">
+          <button disabled={page <= 1} onClick={() => setPage(1)} className="rounded p-1.5 hover:bg-accent disabled:opacity-30"><ChevronsLeft className="h-4 w-4" /></button>
+          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded p-1.5 hover:bg-accent disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button>
+          <span className="px-2 text-muted-foreground">{firstIndex}-{lastIndex} / {doc.filteredCount}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded p-1.5 hover:bg-accent disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
+          <button disabled={page >= totalPages} onClick={() => setPage(totalPages)} className="rounded p-1.5 hover:bg-accent disabled:opacity-30"><ChevronsRight className="h-4 w-4" /></button>
+        </div>
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <span>На страницу</span>
+          <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} className="h-8 rounded-md border bg-background px-2 text-sm">
+            {[50, 100, 200, 500].map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      </div>
     </div>
   );
 }
 
-function ProductPicker({ onPick, busy, existingIds }: { onPick: (p: PickProduct) => void; busy: boolean; existingIds: string[] }) {
+function ProductPicker({ onPick, busy }: { onPick: (p: PickProduct) => void; busy: boolean }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<PickProduct[]>([]);
   const [loading, setLoading] = useState(false);
@@ -534,15 +592,14 @@ function ProductPicker({ onPick, busy, existingIds }: { onPick: (p: PickProduct)
             <p className="px-3 py-3 text-center text-xs text-muted-foreground">Ничего не найдено</p>
           ) : (
             results.slice(0, 20).map((p) => {
-              const already = existingIds.includes(p.id);
               return (
                 <button
-                  key={p.id} disabled={busy || already}
+                  key={p.id} disabled={busy}
                   onClick={() => { onPick(p); setQ(""); setResults([]); }}
                   className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-muted/40 disabled:opacity-50"
                 >
                   <span className="truncate">{p.name}</span>
-                  <span className="ml-2 shrink-0 text-xs text-muted-foreground">{already ? "уже добавлен" : `остаток: ${p.stock}`}</span>
+                  <span className="ml-2 shrink-0 text-xs text-muted-foreground">{`остаток: ${p.stock}`}</span>
                 </button>
               );
             })

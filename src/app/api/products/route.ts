@@ -85,6 +85,12 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
+  // the stocktake picker greys out products already in the document
+  const stocktakeId = sp.get("stocktakeId");
+  const inDoc = stocktakeId
+    ? new Set((await prisma.stocktakeItem.findMany({ where: { stocktakeId, stocktake: { storeId }, productId: { in: products.map((p) => p.id) } }, select: { productId: true } })).map((i) => i.productId))
+    : null;
+
   return NextResponse.json({
     products: products.map((p) => {
       const cost = Number(p.cost ?? 0);
@@ -96,6 +102,7 @@ export async function GET(req: NextRequest) {
         margin: !canSeeCost ? 0 : price > 0 ? Math.round(((price - cost) / price) * 1000) / 10 : 0,
         updatedAt: p.updatedAt, supplierName: p.supplier?.name ?? null, categoryName: p.categoryRef?.name ?? null,
         stock: Number(p.stock), active: p.active,
+        ...(inDoc ? { inStocktake: inDoc.has(p.id) } : {}),
       };
     }),
     total,

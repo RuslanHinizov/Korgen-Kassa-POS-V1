@@ -5,15 +5,15 @@ import { X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 
-interface Row { id: string; name: string; barcode: string | null; stock: number; categoryName: string | null; supplierName: string | null; unit: string; cost: number; price: number }
+interface Row { inStocktake?: boolean; id: string; name: string; barcode: string | null; stock: number; categoryName: string | null; supplierName: string | null; unit: string; cost: number; price: number }
 interface CategoryOption { id: string; name: string }
 interface SupplierOption { id: string; name: string }
 
 /** UMAG's real "Добавление товаров" — a filterable, paginated, checkbox-select
  * product picker (По поставщикам / Категория / Тип товара / Остаток), not just a
  * search box. Adds every checked product to the stocktake in one call. */
-export function AddProductsModal({ stocktakeId, existingIds, onClose, onAdded }: {
-  stocktakeId: string; existingIds: string[]; onClose: () => void; onAdded: () => void;
+export function AddProductsModal({ stocktakeId, onClose, onAdded }: {
+  stocktakeId: string; onClose: () => void; onAdded: () => void;
 }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
@@ -37,7 +37,7 @@ export function AddProductsModal({ stocktakeId, existingIds, onClose, onAdded }:
 
   useEffect(() => {
     setLoading(true);
-    const sp = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    const sp = new URLSearchParams({ page: String(page), pageSize: String(pageSize), stocktakeId });
     if (categoryId) sp.set("categoryId", categoryId);
     if (supplierId) sp.set("supplierId", supplierId);
     if (type) sp.set("type", type);
@@ -46,9 +46,9 @@ export function AddProductsModal({ stocktakeId, existingIds, onClose, onAdded }:
       .then((r) => r.json())
       .then((d) => { setRows(d.products ?? []); setTotal(d.total ?? 0); })
       .finally(() => setLoading(false));
-  }, [page, categoryId, supplierId, type, stock]);
+  }, [page, categoryId, supplierId, type, stock, stocktakeId]);
 
-  const pageIds = rows.filter((r) => !existingIds.includes(r.id)).map((r) => r.id);
+  const pageIds = rows.filter((r) => !r.inStocktake).map((r) => r.id);
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
 
   function toggleAll() {
@@ -69,6 +69,23 @@ export function AddProductsModal({ stocktakeId, existingIds, onClose, onAdded }:
     try {
       const r = await fetch(`/api/inventory/stocktakes/${stocktakeId}/items/bulk`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productIds: [...selected] }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast.error(d.error ?? "Не удалось добавить"); return; }
+      toast.success(`Добавлено товаров: ${d.added}`);
+      onAdded();
+      onClose();
+    } finally { setAdding(false); }
+  }
+
+  async function addAllFound() {
+    if (total === 0) return;
+    if (!confirm(`Добавить в инвентаризацию все найденные товары (${total})?`)) return;
+    setAdding(true);
+    try {
+      const r = await fetch(`/api/inventory/stocktakes/${stocktakeId}/items/bulk`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filter: { categoryId: categoryId || undefined, supplierId: supplierId || undefined, type: type || undefined, stock: stock || undefined } }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { toast.error(d.error ?? "Не удалось добавить"); return; }
@@ -145,7 +162,7 @@ export function AddProductsModal({ stocktakeId, existingIds, onClose, onAdded }:
               </thead>
               <tbody className="divide-y">
                 {rows.map((r) => {
-                  const already = existingIds.includes(r.id);
+                  const already = Boolean(r.inStocktake);
                   return (
                     <tr key={r.id} className={already ? "opacity-40" : "hover:bg-muted/40"}>
                       <td className="px-3 py-2"><input type="checkbox" disabled={already} checked={selected.has(r.id)} onChange={() => toggleOne(r.id)} /></td>
@@ -170,6 +187,13 @@ export function AddProductsModal({ stocktakeId, existingIds, onClose, onAdded }:
             <span>{page} / {totalPages} ({total})</span>
             <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border px-2 py-1 disabled:opacity-30">→</button>
           </div>
+          <button
+            onClick={addAllFound}
+            disabled={total === 0 || adding}
+            className="ml-auto mr-2 inline-flex h-9 items-center gap-1.5 rounded-md border border-primary px-3 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+          >
+            Добавить все найденные ({total})
+          </button>
           <button
             onClick={addSelected}
             disabled={selected.size === 0 || adding}
