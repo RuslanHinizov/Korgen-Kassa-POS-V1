@@ -73,7 +73,7 @@ export function labelsDocument(labels: LabelData[], size: LabelSize): string {
   return (
     `<!doctype html><html><head><meta charset="utf-8"><style>` +
     `@page{size:${size.widthMm}mm ${size.heightMm}mm;margin:0}` +
-    `html,body{margin:0;padding:0;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif}` +
+    `html,body{margin:0;padding:0;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;overflow:hidden}` +
     `.lbl{box-sizing:border-box;padding:1.2mm 1.6mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;text-align:center;overflow:hidden;page-break-after:always;break-after:page}` +
     `.lbl:last-child{page-break-after:auto;break-after:auto}` +
     `.n{font-weight:700;line-height:1.1;max-height:2.25em;overflow:hidden;width:100%}` +

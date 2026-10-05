@@ -42,7 +42,7 @@ export function BarcodeLabelButton({ productId, productName, initialBarcode, pri
           {barcode ? (
             <>
               <div className="mb-3 flex justify-center rounded-lg border bg-muted/40 p-3">
-                <iframe title="Предпросмотр этикетки" srcDoc={labelsDocument([{ name: productName, price, unit, barcode }], size)} style={{ width: `${size.widthMm}mm`, height: `${size.heightMm}mm`, border: "1px solid #bbb", background: "#fff" }} />
+                <iframe scrolling="no" title="Предпросмотр этикетки" srcDoc={labelsDocument([{ name: productName, price, unit, barcode }], size)} style={{ width: `${size.widthMm}mm`, height: `${size.heightMm}mm`, border: "1px solid #bbb", background: "#fff" }} />
               </div>
               <LabelSizePicker value={size} onChange={setSize} className="mb-3" />
               <label className="mb-3 flex items-center gap-2 text-sm">

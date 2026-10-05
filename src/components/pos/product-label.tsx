@@ -38,7 +38,7 @@ export function ProductLabelModal({ product, onClose }: { product: LabelProduct;
           <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-muted" aria-label="Закрыть"><X className="h-5 w-5" /></button>
         </div>
         <div className="mb-3 flex justify-center rounded-lg border bg-muted/40 p-3">
-          <iframe
+          <iframe scrolling="no"
             title="Предпросмотр этикетки"
             srcDoc={labelsDocument([product], size)}
             style={{ width: `${size.widthMm}mm`, height: `${size.heightMm}mm`, border: "1px solid #bbb", background: "#fff" }}
