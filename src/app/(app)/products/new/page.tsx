@@ -1,20 +1,25 @@
 import type { Metadata } from "next";
-import { ProductForm } from "@/components/products/product-form";
-import { Breadcrumb } from "@/components/ui/breadcrumb";
-import { getTranslations } from "next-intl/server";
+import { headers } from "next/headers";
+import { prisma } from "@/lib/db";
+import { auth } from "@/lib/auth";
+import { getStoreId } from "@/lib/store-context";
+import { ProductEditor } from "@/components/products/product-editor/product-editor";
 
-export const metadata: Metadata = { title: "New Product" };
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Товар — Создание" };
 
 export default async function NewProductPage() {
-  const t = await getTranslations("products");
+  const session = await auth.api.getSession({ headers: await headers() });
+  const storeId = await getStoreId();
+  const [categories, suppliers] = await Promise.all([
+    prisma.category.findMany({ where: { storeId }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true, parentId: true, defaultMarkup: true } }),
+    prisma.supplier.findMany({ where: { storeId }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+  ]);
   return (
-    <div className="p-4 sm:p-6 max-w-2xl">
-      <Breadcrumb items={[
-        { label: t("title"), href: "/products" },
-        { label: t("add") },
-      ]} />
-      <h1 className="text-2xl font-bold mb-6">{t("add")}</h1>
-      <ProductForm />
-    </div>
+    <ProductEditor
+      categories={categories.map((c) => ({ ...c, defaultMarkup: c.defaultMarkup == null ? null : Number(c.defaultMarkup) }))}
+      suppliers={suppliers}
+      canSeeCost={session?.user.role !== "WAREHOUSE"}
+    />
   );
 }

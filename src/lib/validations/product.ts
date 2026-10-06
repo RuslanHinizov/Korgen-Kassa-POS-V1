@@ -4,6 +4,10 @@ export const productFormSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
   sku: z.string().max(100).optional().or(z.literal("")),
   barcode: z.string().max(100).optional().or(z.literal("")),
+  additionalCode: z.string().max(100).optional().or(z.literal("")),
+  /// Код НКТ — Kazakhstan national product catalogue code
+  ntin: z.string().max(100).optional().or(z.literal("")),
+  supplierId: z.string().optional().or(z.literal("")),
   scalePlu: z.string().regex(/^\d{5}$/, "Scale PLU must contain exactly 5 digits").optional().or(z.literal("")),
   price: z.coerce.number().min(0, "Price must be non-negative"),
   cost: z.coerce.number().min(0).optional(),

@@ -177,6 +177,7 @@ model User {
   cashMovements     CashMovement[]
   auditLogs         AuditLog[]
   inventoryMovements InventoryMovement[]
+  productChanges    ProductChange[]
   goodsReceipts      GoodsReceipt[]
   stocktakes         Stocktake[]
   writeOffs          WriteOff[]
@@ -302,6 +303,7 @@ model Product {
   saleItems        SaleItem[]
   stockAdjustments StockAdjustment[]
   inventoryMovements InventoryMovement[]
+  changes           ProductChange[]
   receiptItems      GoodsReceiptItem[]
   stocktakeItems    StocktakeItem[]
   promotions        Promotion[]
@@ -969,6 +971,24 @@ model InventoryMovement {
   @@index([productId, createdAt])
   @@index([type, createdAt])
   @@index([supplierId, createdAt])
+}
+
+/// «История изменения товара»: one row per changed field; the rows of one save share a groupId (UMAG shows them as one block).
+model ProductChange {
+  id        String   @id @default(cuid())
+  productId String
+  userId    String
+  groupId   String
+  /// the field that changed: name, unit, barcode, additionalCode, ntin, lowStockThreshold, cost, price, wholesalePrice, category, supplier, active
+  field     String
+  oldValue  String?
+  newValue  String?
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([productId, createdAt])
 }
 
 /// Товары → Склад's own lightweight "Приёмка" tab (lot/expiry-tracked manual

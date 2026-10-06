@@ -531,7 +531,7 @@ export function ProductsList() {
                   <tr key={p.id} className="hover:bg-muted/30">
                     <td className="px-3 py-2.5"><input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)} className="h-4 w-4 accent-primary" /></td>
                     <td className="px-3 py-2.5 font-medium">
-                      <Link href={p.productType === "REGULAR" ? `/products/${p.id}` : editHref(p)} className="text-primary hover:underline">{p.name}</Link>
+                      <Link href={editHref(p)} className="text-primary hover:underline">{p.name}</Link>
                       {!p.active && <span className="ml-1.5 text-xs text-muted-foreground">(неактивен)</span>}
                     </td>
                     <td className="px-3 py-2.5 text-muted-foreground tabular-nums">{p.barcode ?? "—"}</td>
