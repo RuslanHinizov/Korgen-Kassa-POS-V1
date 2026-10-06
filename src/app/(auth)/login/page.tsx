@@ -6,6 +6,11 @@ import { getSession } from "@/lib/auth-client";
 import { Eye, EyeOff } from "lucide-react";
 import { PhoneInput } from "@/components/ui/phone-input";
 
+// the chat opens with this text already typed (Russian, then Kazakh); the user only presses send
+const WHATSAPP_MESSAGE =
+  "Здравствуйте! Пишу по поводу приложения Korgen Kassa. Прошу связаться со мной.\n\n" +
+  "Сәлеметсіз бе! Korgen Kassa қосымшасы бойынша жазып отырмын. Менімен байланысуыңызды сұраймын.";
+
 const WHATSAPP_CONTACTS = [
   { name: "Жандос", phone: "77756131326", label: "+7 775 613 13 26" },
   { name: "Руслан", phone: "77759897660", label: "+7 775 989 76 60" },
@@ -138,7 +143,7 @@ export default function LoginPage() {
           {WHATSAPP_CONTACTS.map((c) => (
             <a
               key={c.phone}
-              href={`https://wa.me/${c.phone}`}
+              href={`https://wa.me/${c.phone}?text=${encodeURIComponent(WHATSAPP_MESSAGE)}`}
               target="_blank"
               rel="noopener noreferrer"
               aria-label={`WhatsApp: ${c.name} ${c.label}`}
